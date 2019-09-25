@@ -213,17 +213,27 @@ def _check_nfs_device(module, nfs_host, device):
     :return: True or False.
     """
     showmount_cmd = module.get_bin_path('showmount', True)
-    rc, showmount_out, err = module.run_command(
-        "%s -a %s" % (showmount_cmd, nfs_host))
-    if rc != 0:
-        module.fail_json(msg="Failed to run showmount. Error message: %s" % err)
+    uname_cmd = module.get_bin_path('uname', True)
+
+    uname_rc, uname_out, uname_err = module.run_command("%s -n" % (uname_cmd))
+    showmount_rc, showmount_out, showmount_err = module.run_command(
+        "%s -e %s" % (showmount_cmd, nfs_host))
+
+    if showmount_rc != 0:
+        module.fail_json(msg="Failed to run showmount.", rc=showmount_rc, err=showmount_err)
+    elif uname_rc != 0:
+        module.fail_json(msg="Failed to run uname.", rc=uname_rc, err=uname_err)
     else:
         showmount_data = showmount_out.splitlines()
-        for line in showmount_data:
-            if line.split(':')[1] == device:
-                return True
+        uname_data = uname_out.splitlines()
 
+        for line in showmount_data:
+            if line.split(' ')[0] == device:
+               if line.split(' ')[-1] == '(everyone)' or uname_data[0] in line.split(' ')[-1]:
+                   return True
         return False
+
+
 
 
 def _validate_vg(module, vg):
@@ -522,7 +532,10 @@ def main():
                     if _check_nfs_device(module, nfs_server, device):
                         result['changed'], result['msg'] = create_fs(
                             module, fs_type, filesystem, vg, device, size, mount_group, auto_mount, account_subsystem, permissions, nfs_server, attributes)
-
+                    else:
+                        result['msg'] = "NFS share %s is not exported" % device
+                        module.fail_json(**result)               
+                        
             if device is None:
                 if vg is None:
                     result['msg'] = 'Required parameter "device" and/or "vg" is missing for filesystem creation.'
